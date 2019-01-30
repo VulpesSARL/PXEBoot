@@ -1,0 +1,4 @@
+﻿a note about iPXE
+
+the DHCP ACK from ProxyDHCP must be responded to port UDP 68, solely on port UDP 4011 does not work ...
+thus the program simply answers on BOTH ports

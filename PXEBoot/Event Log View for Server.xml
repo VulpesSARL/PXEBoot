@@ -1,0 +1,20 @@
+﻿<ViewerConfig>
+  <QueryConfig>
+    <QueryParams>
+      <Simple>
+        <Channel>Application</Channel>
+        <RelativeTimeInfo>0</RelativeTimeInfo>
+        <Source>Fox PXEServer</Source>
+        <BySource>True</BySource>
+      </Simple>
+    </QueryParams>
+    <QueryNode>
+      <Name>Fox PXEServer</Name>
+      <QueryList>
+        <Query Id="0" Path="Application">
+          <Select Path="Application">*[System[Provider[@Name='Fox PXEServer']]]</Select>
+        </Query>
+      </QueryList>
+    </QueryNode>
+  </QueryConfig>
+</ViewerConfig>
