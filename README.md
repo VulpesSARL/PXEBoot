@@ -4,7 +4,7 @@ Small service for Windows, to serivce PXE Boot clients.
 This program supports multiple architectures, using serparate folders for different architectures.
 Includes a read-only TFTP server too.
 
-*This program is intended to combine with [MiniNT5](VulpesSARL/MiniNT5-Tools#), but you can serve any files to boot, even Linux.*
+*This program is intended to combine with [MiniNT5](https://github.com/VulpesSARL/MiniNT5-Tools), but you can serve any files to boot, even Linux.*
 
 ### Prerequisites
 
