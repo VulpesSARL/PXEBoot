@@ -180,12 +180,21 @@ namespace PXEBoot
                             ses.SendData(Port, client, err.GetBytes);
                             return (false);
                         }
+                        if (string.IsNullOrWhiteSpace(rr.Filename) == true)
+                            rr.Filename = ses.currentfilename;
+                        if (string.IsNullOrWhiteSpace(rr.Filename) == true)
+                        {
+                            TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.IllegalTFTPOP, "Malformed packet");
+                            ses.SendData(Port, client, err.GetBytes);
+                            return (false);
+                        }
                         ses.LastUpdated = DateTime.Now;
                         if (ses.currentfile != null)
                             ses.currentfile.Close();
                         ses.currentfile = null;
                         ses.datatosend = null;
                         ses.OpenACK = false;
+                        ses.currentfilename = rr.Filename;
                         Console.WriteLine(client.ToString() + "(" + ses.Architecture.ToString() + ") requesting file: " + rr.Filename);
                         rr.Filename = rr.Filename.Replace("/", "\\");
                         if (rr.Filename.StartsWith("\\") == true)
@@ -330,6 +339,7 @@ namespace PXEBoot
     {
         public IPAddress IP;
         public FileStream currentfile = null;
+        public string currentfilename = "";
         public int blksize = 512;
         public DateTime LastUpdated = DateTime.Now;
         public DateTime LastSend = DateTime.Now;

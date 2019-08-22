@@ -65,6 +65,11 @@ namespace PXEBoot
                         Data.Add(Encoding.ASCII.GetString(buffer.GetBytes()));
                         buffer = new List<byte>();
                     }
+                    else
+                    {
+                        if (Data.Count == 0)
+                            Data.Add("");
+                    }
                 }
                 else
                 {
