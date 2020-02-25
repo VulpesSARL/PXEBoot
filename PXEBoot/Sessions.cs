@@ -97,7 +97,7 @@ namespace PXEBoot
             }
         }
 
-        public bool RegisterSession(IPAddress Client, DHCPArchitecture Architecture)
+        public bool RegisterSession(IPAddress Client, DHCPArchitecture Architecture, string PathOverride)
         {
             if (Client == IPAddress.Any)
                 return (false);
@@ -116,28 +116,44 @@ namespace PXEBoot
             ses.Architecture = Architecture;
             ses.IP = Client;
             ses.TFTPRootPath = Settings.TFTPRootPath;
-            switch (Architecture)
+
+            if (string.IsNullOrWhiteSpace(PathOverride) == false)
             {
-                case DHCPArchitecture.ARC_x86:
-                    ses.TFTPRootPath += "ARC x86\\"; break;
-                case DHCPArchitecture.DEC_ALPHA:
-                    ses.TFTPRootPath += "DEC Alpha\\"; break;
-                case DHCPArchitecture.EFI_ByteCode:
-                    ses.TFTPRootPath += "EFI BC\\"; break;
-                case DHCPArchitecture.EFI_EM64T:
-                    ses.TFTPRootPath += "EFI X64\\"; break;
-                case DHCPArchitecture.EFI_IA32:
-                    ses.TFTPRootPath += "EFI X86\\"; break;
-                case DHCPArchitecture.EFI_ITANIUM:
-                    ses.TFTPRootPath += "EFI ITANIUM\\"; break;
-                case DHCPArchitecture.EFI_XScale:
-                    ses.TFTPRootPath += "EFI XScale\\"; break;
-                case DHCPArchitecture.IA32Legacy:
-                    ses.TFTPRootPath += "BIOS\\"; break;
-                case DHCPArchitecture.NEC_PC98:
-                    ses.TFTPRootPath += "NEC PC98\\"; break;
-                default:
-                    ses.TFTPRootPath += "Unknown\\"; break;
+                ses.TFTPRootPath += PathOverride;
+                if (ses.TFTPRootPath.EndsWith("\\") == false)
+                    ses.TFTPRootPath += "\\";
+                if (Directory.Exists(ses.TFTPRootPath) == false)
+                {
+                    PathOverride = "";
+                    ses.TFTPRootPath = Settings.TFTPRootPath;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(PathOverride) == true)
+            {
+                switch (Architecture)
+                {
+                    case DHCPArchitecture.ARC_x86:
+                        ses.TFTPRootPath += "ARC x86\\"; break;
+                    case DHCPArchitecture.DEC_ALPHA:
+                        ses.TFTPRootPath += "DEC Alpha\\"; break;
+                    case DHCPArchitecture.EFI_ByteCode:
+                        ses.TFTPRootPath += "EFI BC\\"; break;
+                    case DHCPArchitecture.EFI_EM64T:
+                        ses.TFTPRootPath += "EFI X64\\"; break;
+                    case DHCPArchitecture.EFI_IA32:
+                        ses.TFTPRootPath += "EFI X86\\"; break;
+                    case DHCPArchitecture.EFI_ITANIUM:
+                        ses.TFTPRootPath += "EFI ITANIUM\\"; break;
+                    case DHCPArchitecture.EFI_XScale:
+                        ses.TFTPRootPath += "EFI XScale\\"; break;
+                    case DHCPArchitecture.IA32Legacy:
+                        ses.TFTPRootPath += "BIOS\\"; break;
+                    case DHCPArchitecture.NEC_PC98:
+                        ses.TFTPRootPath += "NEC PC98\\"; break;
+                    default:
+                        ses.TFTPRootPath += "Unknown\\"; break;
+                }
             }
 
             lock (RunningSessions)

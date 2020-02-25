@@ -153,6 +153,9 @@ namespace PXEBoot
 
         public static int SMain()
         {
+#if DEBUG
+            Test.DisplayIPv4NetworkInterfaces();
+#endif
             try
             {
                 Settings.Load();
@@ -225,8 +228,27 @@ namespace PXEBoot
             }
             finally
             {
-                if (RunService == true)
-                    u.BeginReceive(new AsyncCallback(recv69), u);
+                try
+                {
+                    if (RunService == true)
+                        u.BeginReceive(new AsyncCallback(recv69), u);
+                }
+                catch
+                {
+                    //reset port!
+                    try
+                    {
+                        u.Close();
+                    }
+                    catch
+                    {
+
+                    }
+                    UDP69 = new UdpClient(new IPEndPoint(IPAddress.Any, 69));
+                    UDP69.EnableBroadcast = true;
+                    UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
+                    UDP69.DontFragment = true;
+                }
             }
         }
 
@@ -292,10 +314,37 @@ namespace PXEBoot
                 if (dhcppacket.DHCP60ClassIdentifier.StartsWith("PXEClient") == false)
                     return;
                 detectedarch = DetectArch(dhcppacket.DHCP60ClassIdentifier);
-                if (detectedarch == DHCPArchitecture.Undefined)
-                    return;
+                //if (detectedarch == DHCPArchitecture.Undefined)
+                //    return;
 
-                Session.RegisterSession(ip.Address, detectedarch);
+                string MACAddr = dhcppacket.GetMacAddress();
+                string BootFile = "bootmgfw.efi";
+                string BootPath = null;
+
+                do
+                {
+                    using (RegistryKey key = Registry.LocalMachine.OpenSubKey("Software\\Fox\\PXEBoot\\MAC\\" + MACAddr))
+                    {
+                        if (key != null)
+                        {
+                            object o = key.GetValue("BootFile");
+                            if (o != null)
+                                BootFile = Convert.ToString(o);
+
+                            o = key.GetValue("Path");
+                            if (o != null)
+                            {
+                                BootPath = Convert.ToString(o);
+                            }
+                            break;
+                        }
+                    }
+                    if (MACAddr.Length <= 2)
+                        break;
+                    MACAddr = MACAddr.Substring(0, MACAddr.Length - 2);
+                } while (MACAddr.Length > 0);
+
+                Session.RegisterSession(ip.Address, detectedarch, BootPath);
 
                 DHCPPacket send = new DHCPPacket();
                 send.MacAddress = dhcppacket.MacAddress;
@@ -305,29 +354,6 @@ namespace PXEBoot
                 send.SupportedDHCP9ParameterList = dhcppacket.DHCP9ReqParameterList;
                 send.DHCP60ClassIdentifier = "PXEClient";
                 send.DHCP66BootServer = GetCurrentIP().ToString();
-
-                string MACAddr = dhcppacket.GetMacAddress();
-                string BootFile = "bootmgfw.efi";
-
-                do
-                {
-                    RegistryKey key = Registry.LocalMachine.OpenSubKey("Software\\Fox\\PXEBoot\\MAC\\" + MACAddr);
-                    if (key != null)
-                    {
-                        object o = key.GetValue("BootFile");
-                        if (o != null)
-                        {
-                            BootFile = Convert.ToString(o);
-                            key.Close();
-                            break;
-                        }
-                        key.Close();
-                    }
-                    if (MACAddr.Length <= 2)
-                        break;
-                    MACAddr = MACAddr.Substring(0, MACAddr.Length - 2);
-                } while (MACAddr.Length > 0);
-
                 send.DHCP67BootFilename = BootFile;
 
                 //send.BootFile = "bootmgfw.efi";
