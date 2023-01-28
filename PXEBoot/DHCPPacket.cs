@@ -143,13 +143,23 @@ namespace PXEBoot
 
         IPAddress GetCurrentIP()
         {
-            string strHostName = Dns.GetHostName();
-            IPHostEntry ipEntry = Dns.GetHostEntry(strHostName);
-            IPAddress[] addr = ipEntry.AddressList;
-            foreach (IPAddress a in addr)
+            if (string.IsNullOrWhiteSpace(Settings.IPAddressOverride) == false)
             {
-                if (a.AddressFamily == AddressFamily.InterNetwork)
-                    return (a);
+                IPAddress ipaddr;
+                if (IPAddress.TryParse(Settings.IPAddressOverride, out ipaddr) == false)
+                    return (null);
+                return (ipaddr);
+            }
+            else
+            {
+                string strHostName = Dns.GetHostName();
+                IPHostEntry ipEntry = Dns.GetHostEntry(strHostName);
+                IPAddress[] addr = ipEntry.AddressList;
+                foreach (IPAddress a in addr)
+                {
+                    if (a.AddressFamily == AddressFamily.InterNetwork)
+                        return (a);
+                }
             }
 
             return (null);

@@ -13,6 +13,7 @@ using System.ServiceProcess;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace PXEBoot
 {
@@ -22,6 +23,7 @@ namespace PXEBoot
         static UdpClient UDP67 = null;
         public static UdpClient UDP69 = null;
         public static Sessions Session = null;
+        public static IPAddress ListenIP = IPAddress.Any;
         static bool RunService = true;
 #if !DEBUG
         static ServiceBase[] ServicesToRun;
@@ -41,11 +43,29 @@ namespace PXEBoot
             return (null);
         }
 
+        [STAThread]
         static int Main(string[] args)
         {
             if (args.Length > 0)
             {
 #if !DEBUG
+                if (args[0] == "-?" || args[0] == "-help")
+                {
+                    Console.WriteLine("-config            Starts GUI Configuration");
+                    Console.WriteLine("-console           Run the application without service (debug)");
+                    Console.WriteLine("-createdirstruct   Creates directory structure");
+                    Console.WriteLine("-install           Installs the service");
+                    Console.WriteLine("-registereventlog  Registers the Eventlog");
+                    return (0);
+                }
+                if (args[0] == "-config")
+                {
+                    Console.WriteLine("Starting GUI Configuration");
+                    Application.EnableVisualStyles();
+                    Application.SetCompatibleTextRenderingDefault(false);
+                    Application.Run(new frmConfigWindow());
+                    return (0);
+                }
                 if (args[0] == "-install")
                 {
                     ManagedInstallerClass.InstallHelper(new string[] { Assembly.GetExecutingAssembly().Location });
@@ -81,9 +101,9 @@ namespace PXEBoot
 #if DEBUG
             SMain();
 #else
-            ServicesToRun = new ServiceBase[] 
-            { 
-                new PXEService() 
+            ServicesToRun = new ServiceBase[]
+            {
+                new PXEService()
             };
             ServiceBase.Run(ServicesToRun);
 #endif
@@ -169,22 +189,28 @@ namespace PXEBoot
                 if (Settings.TFTPRootPath.EndsWith("\\") == false)
                     Settings.TFTPRootPath += "\\";
 
+                if (string.IsNullOrWhiteSpace(Settings.ListenAddress) == false)
+                {
+                    if (IPAddress.TryParse(Settings.ListenAddress, out ListenIP) == false)
+                        ListenIP = IPAddress.Any;
+                }
+
                 Session = new Sessions();
 
-                UDP4011 = new UdpClient(new IPEndPoint(IPAddress.Any, 4011));
+                UDP4011 = new UdpClient(new IPEndPoint(ListenIP, 4011));
                 UDP4011.EnableBroadcast = true;
-                UDP4011.BeginReceive(new AsyncCallback(recv4011), UDP4011);
                 UDP4011.DontFragment = true;
+                UDP4011.BeginReceive(new AsyncCallback(recv4011), UDP4011);
 
-                UDP67 = new UdpClient(new IPEndPoint(IPAddress.Any, 67));
+                UDP67 = new UdpClient(new IPEndPoint(ListenIP, 67));
                 UDP67.EnableBroadcast = true;
-                UDP67.BeginReceive(new AsyncCallback(recv67), UDP67);
                 UDP67.DontFragment = true;
+                UDP67.BeginReceive(new AsyncCallback(recv67), UDP67);
 
-                UDP69 = new UdpClient(new IPEndPoint(IPAddress.Any, 69));
+                UDP69 = new UdpClient(new IPEndPoint(ListenIP, 69));
                 UDP69.EnableBroadcast = true;
-                UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
                 UDP69.DontFragment = true;
+                UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
 
                 Console.WriteLine("Ready...");
                 FoxEventLog.WriteEventLog("Server started", System.Diagnostics.EventLogEntryType.Information);
@@ -217,7 +243,7 @@ namespace PXEBoot
             }
             try
             {
-                IPEndPoint ip = new IPEndPoint(IPAddress.Any, 0);
+                IPEndPoint ip = new IPEndPoint(ListenIP, 0);
                 byte[] buffer = u.EndReceive(res, ref ip);
 
                 Session.Data(ip.Address, ip.Port, buffer);
@@ -244,10 +270,10 @@ namespace PXEBoot
                     {
 
                     }
-                    UDP69 = new UdpClient(new IPEndPoint(IPAddress.Any, 69));
+                    UDP69 = new UdpClient(new IPEndPoint(ListenIP, 69));
                     UDP69.EnableBroadcast = true;
-                    UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
                     UDP69.DontFragment = true;
+                    UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
                 }
             }
         }
@@ -290,7 +316,7 @@ namespace PXEBoot
             }
             try
             {
-                IPEndPoint ip = new IPEndPoint(IPAddress.Any, 0);
+                IPEndPoint ip = new IPEndPoint(ListenIP, 0);
                 byte[] buffer;
 
                 try
@@ -418,7 +444,7 @@ namespace PXEBoot
 
             try
             {
-                ip = new IPEndPoint(IPAddress.Any, 0);
+                ip = new IPEndPoint(ListenIP, 0);
                 byte[] buffer = u.EndReceive(res, ref ip);
 
                 dhcppacket = new DHCPPacket(buffer);

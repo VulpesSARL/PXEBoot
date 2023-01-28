@@ -376,7 +376,7 @@ namespace PXEBoot
             {
                 try
                 {
-                    udp = new UdpClient(new IPEndPoint(IPAddress.Any, i));
+                    udp = new UdpClient(new IPEndPoint(Program.ListenIP, i));
                     udp.EnableBroadcast = true;
                     udp.DontFragment = true;
                     udp.BeginReceive(new AsyncCallback(recvdata), udp);
@@ -409,7 +409,7 @@ namespace PXEBoot
             {
                 if (OpenACK == false)
                     return;
-                IPEndPoint ip = new IPEndPoint(IPAddress.Any, 0);
+                IPEndPoint ip = new IPEndPoint(Program.ListenIP, 0);
                 byte[] buffer = u.EndReceive(res, ref ip);
 
                 Program.Session.Data(ip.Address, ip.Port, buffer);
