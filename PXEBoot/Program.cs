@@ -19,29 +19,11 @@ namespace PXEBoot
 {
     class Program
     {
-        static UdpClient UDP4011 = null;
-        static UdpClient UDP67 = null;
-        public static UdpClient UDP69 = null;
-        public static Sessions Session = null;
-        public static IPAddress ListenIP = IPAddress.Any;
-        static bool RunService = true;
+        static public bool RunService = true;
+        static List<Connector> Connectors = new List<Connector>();
 #if !DEBUG
         static ServiceBase[] ServicesToRun;
 #endif
-
-        static IPAddress GetCurrentIP()
-        {
-            string strHostName = Dns.GetHostName();
-            IPHostEntry ipEntry = Dns.GetHostEntry(strHostName);
-            IPAddress[] addr = ipEntry.AddressList;
-            foreach (IPAddress a in addr)
-            {
-                if (a.AddressFamily == AddressFamily.InterNetwork)
-                    return (a);
-            }
-
-            return (null);
-        }
 
         [STAThread]
         static int Main(string[] args)
@@ -49,16 +31,16 @@ namespace PXEBoot
             if (args.Length > 0)
             {
 #if !DEBUG
-                if (args[0] == "-?" || args[0] == "-help")
+                if (args[0] == "/?" || args[0] == "/help" || args[0] == "-?" || args[0] == "-help")
                 {
-                    Console.WriteLine("-config            Starts GUI Configuration");
-                    Console.WriteLine("-console           Run the application without service (debug)");
-                    Console.WriteLine("-createdirstruct   Creates directory structure");
-                    Console.WriteLine("-install           Installs the service");
-                    Console.WriteLine("-registereventlog  Registers the Eventlog");
+                    Console.WriteLine("/config            Starts GUI Configuration");
+                    Console.WriteLine("/console           Run the application without service (debug)");
+                    Console.WriteLine("/createdirstruct   Creates directory structure");
+                    Console.WriteLine("/install           Installs the service");
+                    Console.WriteLine("/registereventlog  Registers the Eventlog");
                     return (0);
                 }
-                if (args[0] == "-config")
+                if (args[0] == "/config")
                 {
                     Console.WriteLine("Starting GUI Configuration");
                     Application.EnableVisualStyles();
@@ -66,12 +48,12 @@ namespace PXEBoot
                     Application.Run(new frmConfigWindow());
                     return (0);
                 }
-                if (args[0] == "-install")
+                if (args[0] == "/install")
                 {
                     ManagedInstallerClass.InstallHelper(new string[] { Assembly.GetExecutingAssembly().Location });
                     return (0);
                 }
-                if (args[0] == "-console")
+                if (args[0] == "/console")
                 {
                     SMain();
                     Console.WriteLine("Press any key . . . ");
@@ -79,7 +61,7 @@ namespace PXEBoot
                     StopService();
                     return (0);
                 }
-                if (args[0] == "-registereventlog")
+                if (args[0] == "/registereventlog")
                 {
                     try
                     {
@@ -91,7 +73,7 @@ namespace PXEBoot
                     }
                     return (0);
                 }
-                if (args[0] == "-createdirstruct")
+                if (args[0] == "/createdirstruct")
                 {
                     return (CreateDirStruct());
                 }
@@ -109,20 +91,6 @@ namespace PXEBoot
 #endif
 
             return (0);
-        }
-
-        public static void StopService()
-        {
-            RunService = false;
-
-            if (UDP4011 != null)
-                UDP4011.Close();
-            if (UDP67 != null)
-                UDP67.Close();
-            if (UDP69 != null)
-                UDP69.Close();
-            if (Session != null)
-                Session.StopSessions();
         }
 
         static void CreateDir(string Dir)
@@ -171,55 +139,71 @@ namespace PXEBoot
             return (0);
         }
 
+        public static Dictionary<IPAddress, string> GetNICsAndIPAddresses()
+        {
+            Dictionary<IPAddress, string> dict = new Dictionary<IPAddress, string>();
+            foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.Supports(NetworkInterfaceComponent.IPv4) == false)
+                    continue;
+                string NN = nic.Name;
+                IPv4InterfaceProperties ipprop = nic.GetIPProperties().GetIPv4Properties();
+                if (ipprop == null)
+                    continue;
+
+                foreach (UnicastIPAddressInformation ip in nic.GetIPProperties().UnicastAddresses)
+                {
+                    if (ip.Address.AddressFamily != AddressFamily.InterNetwork)
+                        continue;
+                    if (ip.Address.ToString().StartsWith("169.254.") == true)
+                        continue;
+                    if (ip.Address.ToString() == "127.0.0.1")
+                        continue;
+                    dict.Add(ip.Address, NN + " " + ip.Address.ToString() + (ipprop.IsDhcpEnabled == true ? " [DHCP]" : ""));
+                }
+            }
+            return (dict);
+        }
+
         public static int SMain()
         {
-#if DEBUG
-            Test.DisplayIPv4NetworkInterfaces();
-#endif
             try
             {
                 Settings.Load();
 
                 if (Directory.Exists(Settings.TFTPRootPath) == false)
                 {
-                    FoxEventLog.WriteEventLog("Cannot find path " + (Settings.TFTPRootPath == null ? "<none>" : Settings.TFTPRootPath) + "\n\nMake sure that it is correct in the registry HKLM\\Software\\Fox\\PXEBoot\\RootPath", System.Diagnostics.EventLogEntryType.Error);
+                    FoxEventLog.WriteEventLog("Cannot find path " + (Settings.TFTPRootPath == null ? "<none>" : Settings.TFTPRootPath) + "\n\nMake sure that it is correct in the registry HKLM\\Software\\Fox\\PXEBoot\\RootPath", EventLogEntryType.Error);
                     return (1);
                 }
 
                 if (Settings.TFTPRootPath.EndsWith("\\") == false)
                     Settings.TFTPRootPath += "\\";
 
-                if (string.IsNullOrWhiteSpace(Settings.ListenAddress) == false)
+                foreach (KeyValuePair<IPAddress, string> kvp in GetNICsAndIPAddresses())
                 {
-                    if (IPAddress.TryParse(Settings.ListenAddress, out ListenIP) == false)
-                        ListenIP = IPAddress.Any;
+                    if (Settings.UseAllInterfaces == true || Settings.Interfaces.Contains(kvp.Value) == true)
+                    {
+                        Connector conn = new Connector();
+                        conn.Connect(kvp.Key);
+                        Connectors.Add(conn);
+                    }
                 }
 
-                Session = new Sessions();
-
-                UDP4011 = new UdpClient(new IPEndPoint(ListenIP, 4011));
-                UDP4011.EnableBroadcast = true;
-                UDP4011.DontFragment = true;
-                UDP4011.BeginReceive(new AsyncCallback(recv4011), UDP4011);
-
-                UDP67 = new UdpClient(new IPEndPoint(ListenIP, 67));
-                UDP67.EnableBroadcast = true;
-                UDP67.DontFragment = true;
-                UDP67.BeginReceive(new AsyncCallback(recv67), UDP67);
-
-                UDP69 = new UdpClient(new IPEndPoint(ListenIP, 69));
-                UDP69.EnableBroadcast = true;
-                UDP69.DontFragment = true;
-                UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
+                if (Connectors.Count == 0)
+                {
+                    FoxEventLog.WriteEventLog("No interfaces available to listen to ...", EventLogEntryType.Error);
+                    return (2);
+                }
 
                 Console.WriteLine("Ready...");
-                FoxEventLog.WriteEventLog("Server started", System.Diagnostics.EventLogEntryType.Information);
+                FoxEventLog.WriteEventLog("Server started", EventLogEntryType.Information);
             }
             catch (Exception ee)
             {
                 Console.WriteLine(ee.Message);
-                FoxEventLog.WriteEventLog("Server did not start: " + ee.Message, System.Diagnostics.EventLogEntryType.Error);
-                return (1);
+                FoxEventLog.WriteEventLog("Server did not start: " + ee.Message, EventLogEntryType.Error);
+                return (3);
             }
 #if DEBUG
             Console.WriteLine("Press any key . . . ");
@@ -229,283 +213,12 @@ namespace PXEBoot
             return (0);
         }
 
-        static void recv69(IAsyncResult res)
+        static public void StopService()
         {
-            UdpClient u;
-            try
+            RunService = false;
+            foreach (Connector conn in Connectors)
             {
-                u = (UdpClient)res.AsyncState;
-            }
-            catch
-            {
-                FoxEventLog.WriteEventLog("Invalid packet on UDP 69", System.Diagnostics.EventLogEntryType.Warning);
-                return;
-            }
-            try
-            {
-                IPEndPoint ip = new IPEndPoint(ListenIP, 0);
-                byte[] buffer = u.EndReceive(res, ref ip);
-
-                Session.Data(ip.Address, ip.Port, buffer);
-            }
-            catch
-            {
-
-            }
-            finally
-            {
-                try
-                {
-                    if (RunService == true)
-                        u.BeginReceive(new AsyncCallback(recv69), u);
-                }
-                catch
-                {
-                    //reset port!
-                    try
-                    {
-                        u.Close();
-                    }
-                    catch
-                    {
-
-                    }
-                    UDP69 = new UdpClient(new IPEndPoint(ListenIP, 69));
-                    UDP69.EnableBroadcast = true;
-                    UDP69.DontFragment = true;
-                    UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
-                }
-            }
-        }
-
-        static DHCPArchitecture DetectArch(string ID)
-        {
-            DHCPArchitecture detectedarch = DHCPArchitecture.Undefined;
-            if (ID.StartsWith("PXEClient:Arch:00000") == true)
-                detectedarch = DHCPArchitecture.IA32Legacy;
-            if (ID.StartsWith("PXEClient:Arch:00001") == true)
-                detectedarch = DHCPArchitecture.NEC_PC98;
-            if (ID.StartsWith("PXEClient:Arch:00002") == true)
-                detectedarch = DHCPArchitecture.EFI_ITANIUM;
-            if (ID.StartsWith("PXEClient:Arch:00003") == true)
-                detectedarch = DHCPArchitecture.DEC_ALPHA;
-            if (ID.StartsWith("PXEClient:Arch:00004") == true)
-                detectedarch = DHCPArchitecture.ARC_x86;
-            if (ID.StartsWith("PXEClient:Arch:00006") == true)
-                detectedarch = DHCPArchitecture.EFI_IA32;
-            if (ID.StartsWith("PXEClient:Arch:00007") == true)
-                detectedarch = DHCPArchitecture.EFI_ByteCode;
-            if (ID.StartsWith("PXEClient:Arch:00008") == true)
-                detectedarch = DHCPArchitecture.EFI_XScale;
-            if (ID.StartsWith("PXEClient:Arch:00009") == true)
-                detectedarch = DHCPArchitecture.EFI_EM64T;
-            return (detectedarch);
-        }
-
-        static void recv4011(IAsyncResult res)
-        {
-            UdpClient u;
-            try
-            {
-                u = (UdpClient)res.AsyncState;
-            }
-            catch
-            {
-                FoxEventLog.WriteEventLog("Invalid packet on UDP 4011", System.Diagnostics.EventLogEntryType.Warning);
-                return;
-            }
-            try
-            {
-                IPEndPoint ip = new IPEndPoint(ListenIP, 0);
-                byte[] buffer;
-
-                try
-                {
-                    buffer = u.EndReceive(res, ref ip);
-                }
-                catch
-                {
-                    return;
-                }
-
-                DHCPPacket dhcppacket = new DHCPPacket(buffer);
-                DHCPArchitecture detectedarch = DHCPArchitecture.Undefined;
-
-                if (dhcppacket.Malformed == true)
-                    return;
-                if (dhcppacket.OperationCode != DHCPOperationCode.ClientToServer)
-                    return;
-                if (dhcppacket.DHCP53MessageType != DHCPMessageType.DHCPREQUEST)
-                    return;
-                if (dhcppacket.DHCP60ClassIdentifier.StartsWith("PXEClient") == false)
-                    return;
-                detectedarch = DetectArch(dhcppacket.DHCP60ClassIdentifier);
-                //if (detectedarch == DHCPArchitecture.Undefined)
-                //    return;
-
-                string MACAddr = dhcppacket.GetMacAddress();
-                string BootFile = "bootmgfw.efi";
-                string BootPath = null;
-
-                do
-                {
-                    using (RegistryKey key = Registry.LocalMachine.OpenSubKey("Software\\Fox\\PXEBoot\\MAC\\" + MACAddr))
-                    {
-                        if (key != null)
-                        {
-                            object o = key.GetValue("BootFile");
-                            if (o != null)
-                                BootFile = Convert.ToString(o);
-
-                            o = key.GetValue("Path");
-                            if (o != null)
-                            {
-                                BootPath = Convert.ToString(o);
-                            }
-                            break;
-                        }
-                    }
-                    if (MACAddr.Length <= 2)
-                        break;
-                    MACAddr = MACAddr.Substring(0, MACAddr.Length - 2);
-                } while (MACAddr.Length > 0);
-
-                Session.RegisterSession(ip.Address, detectedarch, BootPath);
-
-                DHCPPacket send = new DHCPPacket();
-                send.MacAddress = dhcppacket.MacAddress;
-                send.XID = dhcppacket.XID;
-                send.DHCP53MessageType = DHCPMessageType.DHCPACK;
-                send.WantedDHCP9ParameterList = DHCPPacket.DHCP9ParameterListBootFiles;
-                send.SupportedDHCP9ParameterList = dhcppacket.DHCP9ReqParameterList;
-                send.DHCP60ClassIdentifier = "PXEClient";
-                send.DHCP66BootServer = GetCurrentIP().ToString();
-                send.DHCP67BootFilename = BootFile;
-
-                //send.BootFile = "bootmgfw.efi";
-                //send.Servername = GetCurrentIP().ToString();
-
-                if (detectedarch == DHCPArchitecture.IA32Legacy)
-                {
-                    send.DHCP43VendorSpecificInfo = new byte[] { 0x01, 0x04, 0x00, 0x00, 0x00, 0x00, 0xff };
-                    send.WantedDHCP9ParameterList.Add(43);
-                }
-
-                byte[] data = send.GetBytes();
-                if (data == null)
-                    return;
-
-                SendData(UDP4011, 4011, ip.Address, data);
-                SendData(UDP4011, 68, IPAddress.Broadcast, data);
-
-                Console.WriteLine(ip.Address.ToString() + " DHCP ack sent (System: " + detectedarch.ToString() + ")");
-            }
-            finally
-            {
-                if (RunService == true)
-                {
-                    try
-                    {
-                        u.BeginReceive(new AsyncCallback(recv4011), u);
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            Thread.Sleep(1000);
-                            u.BeginReceive(new AsyncCallback(recv4011), u);
-                        }
-                        catch
-                        {
-                            FoxEventLog.WriteEventLog("Cannot reset port 4011", System.Diagnostics.EventLogEntryType.Error);
-                            Process.GetCurrentProcess().Kill();
-                        }
-                    }
-                }
-            }
-        }
-
-        static void recv67(IAsyncResult res)
-        {
-            UdpClient u;
-            try
-            {
-                u = (UdpClient)res.AsyncState;
-            }
-            catch
-            {
-                FoxEventLog.WriteEventLog("Invalid packet on UDP 67", System.Diagnostics.EventLogEntryType.Warning);
-                return;
-            }
-
-            DHCPPacket dhcppacket;
-            DHCPArchitecture detectedarch;
-            IPEndPoint ip;
-
-            try
-            {
-                ip = new IPEndPoint(ListenIP, 0);
-                byte[] buffer = u.EndReceive(res, ref ip);
-
-                dhcppacket = new DHCPPacket(buffer);
-                detectedarch = DHCPArchitecture.Undefined;
-            }
-            catch
-            {
-                if (RunService == true) //Shutdown service causes an exception on u.EndReceive()
-                    FoxEventLog.WriteEventLog("Cannot process data on UDP 67", System.Diagnostics.EventLogEntryType.Warning);
-                return;
-            }
-
-            try
-            {
-                if (dhcppacket.Malformed == true)
-                    return;
-                if (dhcppacket.OperationCode != DHCPOperationCode.ClientToServer)
-                    return;
-                if (dhcppacket.DHCP53MessageType != DHCPMessageType.DHCPDISCOVER)
-                    return;
-                if (dhcppacket.DHCP60ClassIdentifier.StartsWith("PXEClient") == false)
-                    return;
-                detectedarch = DetectArch(dhcppacket.DHCP60ClassIdentifier);
-                if (detectedarch == DHCPArchitecture.Undefined)
-                    return;
-
-                DHCPPacket send = new DHCPPacket();
-                send.MacAddress = dhcppacket.MacAddress;
-                send.XID = dhcppacket.XID;
-                send.DHCP53MessageType = DHCPMessageType.DHCPOFFER;
-                send.WantedDHCP9ParameterList = DHCPPacket.DHCP9ParameterListPXEClient;
-                send.SupportedDHCP9ParameterList = dhcppacket.DHCP9ReqParameterList;
-                send.DHCP60ClassIdentifier = "PXEClient";
-
-                byte[] data = send.GetBytes();
-                if (data == null)
-                    return;
-                SendData(UDP67, 68, IPAddress.Broadcast, data);
-
-                Console.WriteLine(ip.Address.ToString() + " DHCP offer sent");
-            }
-            catch
-            {
-                FoxEventLog.WriteEventLog("Cannot fully process/decode data on UDP 67", System.Diagnostics.EventLogEntryType.Warning);
-            }
-            finally
-            {
-                if (RunService == true)
-                    u.BeginReceive(new AsyncCallback(recv67), u);
-            }
-        }
-
-        public static void SendData(UdpClient udp, int Port, IPAddress to, byte[] data)
-        {
-            try
-            {
-                udp.Send(data, data.Length, new IPEndPoint(to, Port));
-            }
-            catch (Exception ee)
-            {
-                Console.WriteLine(ee.ToString());
+                conn.StopService();
             }
         }
     }

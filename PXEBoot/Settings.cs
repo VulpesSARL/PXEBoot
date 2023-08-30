@@ -10,8 +10,8 @@ namespace PXEBoot
     static class Settings
     {
         static public string TFTPRootPath;
-        static public string IPAddressOverride;
-        static public string ListenAddress;
+        static public bool UseAllInterfaces;
+        static public List<string> Interfaces;
 
         static public void Load()
         {
@@ -20,9 +20,22 @@ namespace PXEBoot
                 if (reg == null)
                     return;
                 TFTPRootPath = reg.GetValue("RootPath", "").ToString();
-                IPAddressOverride = reg.GetValue("IPAddressOverride", "").ToString();
-                ListenAddress = reg.GetValue("ListenAddress", "").ToString();
-
+                UseAllInterfaces = reg.GetValue("UseAllInterfaces", "1").ToString() == "1" ? true : false;
+                Interfaces = new List<string>();
+                using (RegistryKey IF = reg.OpenSubKey("Interfaces"))
+                {
+                    if (IF != null)
+                    {
+                        foreach (string vn in IF.GetValueNames())
+                        {
+                            string n = IF.GetValue(vn).ToString();
+                            if (string.IsNullOrWhiteSpace(n) == true)
+                                continue;
+                            Interfaces.Add(n);
+                        }
+                        IF.Close();
+                    }
+                }
                 reg.Close();
             }
         }

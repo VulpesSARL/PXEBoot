@@ -64,6 +64,7 @@
     <Compile Include="ConfigWindow.Designer.cs">
       <DependentUpon>ConfigWindow.cs</DependentUpon>
     </Compile>
+    <Compile Include="Connector.cs" />
     <Compile Include="DHCPPacket.cs" />
     <Compile Include="Event.cs" />
     <Compile Include="Extensions.cs" />
@@ -83,7 +84,6 @@
     </Compile>
     <Compile Include="Sessions.cs" />
     <Compile Include="Settings.cs" />
-    <Compile Include="Test.cs" />
     <Compile Include="TFTP.cs" />
   </ItemGroup>
   <ItemGroup>

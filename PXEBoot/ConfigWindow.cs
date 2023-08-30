@@ -34,28 +34,36 @@ namespace PXEBoot
 
                     if (string.IsNullOrWhiteSpace(txtRootPath.Text) == true)
                     {
-                        MessageBox.Show(this, "Invalid root path", this.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show(this, "Invalid root path", this.Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+
+                    if (chkUseAllIF.Checked == false && lstIF.CheckedItems.Count == 0)
+                    {
+                        MessageBox.Show(this, "Select at least one interface", this.Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
 
                     reg.SetValue("RootPath", txtRootPath.Text.Trim(), RegistryValueKind.String);
+                    reg.SetValue("UseAllInterfaces", chkUseAllIF.Checked == true ? "1" : "0", RegistryValueKind.String);
+                    reg.DeleteSubKeyTree("Interfaces", false);
 
-                    if (IPAddress.TryParse(txtListenAddress.Text.Trim(), out _) == true)
+                    using (RegistryKey IF = reg.CreateSubKey("Interfaces"))
                     {
-                        reg.SetValue("ListenAddress", txtListenAddress.Text.Trim(), RegistryValueKind.String);
-                    }
-                    else
-                    {
-                        reg.DeleteValue("ListenAddress");
-                    }
-
-                    if (IPAddress.TryParse(txtIPAddressOverride.Text.Trim(), out _) == true)
-                    {
-                        reg.SetValue("IPAddressOverride", txtIPAddressOverride.Text.Trim(), RegistryValueKind.String);
-                    }
-                    else
-                    {
-                        reg.DeleteValue("IPAddressOverride");
+                        if (IF == null)
+                        {
+                            MessageBox.Show(this, "Cannot save interface list", this.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            return;
+                        }
+                        int Counter = 1;
+                        for (int i = 0; i < lstIF.Items.Count; i++)
+                        {
+                            if (lstIF.GetItemChecked(i) == true)
+                            {
+                                IF.SetValue(Counter.ToString(), lstIF.Items[i].ToString(), RegistryValueKind.String);
+                                Counter++;
+                            }
+                        }
                     }
 
                     this.Close();
@@ -81,11 +89,41 @@ namespace PXEBoot
                     return;
 
                 txtRootPath.Text = reg.GetValue("RootPath", "").ToString();
-                txtIPAddressOverride.Text = reg.GetValue("IPAddressOverride", "").ToString();
-                txtListenAddress.Text = reg.GetValue("ListenAddress", "").ToString();
+                chkUseAllIF.Checked = reg.GetValue("UseAllInterfaces", "1").ToString() == "1" ? true : false;
+                chkUseAllIF_CheckedChanged(sender, e);
+                lstIF.Items.Clear();
+                foreach (KeyValuePair<IPAddress, string> kvp in Program.GetNICsAndIPAddresses())
+                {
+                    lstIF.Items.Add(kvp.Value);
+                }
+
+                using (RegistryKey IF = reg.OpenSubKey("Interfaces"))
+                {
+                    if (IF != null)
+                    {
+                        foreach (string vn in IF.GetValueNames())
+                        {
+                            string n = IF.GetValue(vn).ToString();
+                            if (string.IsNullOrWhiteSpace(n) == true)
+                                continue;
+                            for (int i = 0; i < lstIF.Items.Count; i++)
+                            {
+                                if (lstIF.Items[i].ToString() == n)
+                                    lstIF.SetItemChecked(i, true);
+                            }
+                        }
+                        IF.Close();
+                    }
+                }
 
                 reg.Close();
             }
+        }
+
+        private void chkUseAllIF_CheckedChanged(object sender, EventArgs e)
+        {
+            lstIF.Enabled = !chkUseAllIF.Checked;
+            lblHint.Enabled = !chkUseAllIF.Checked;
         }
     }
 }

@@ -17,9 +17,11 @@ namespace PXEBoot
         Thread RepeaterThread;
         Thread TimeoutCollector;
         bool StopThreads = false;
+        Connector Connector;
 
-        public Sessions()
+        public Sessions(Connector Connector)
         {
+            this.Connector = Connector;
             RepeaterThread = new Thread(new ThreadStart(Repeater));
             TimeoutCollector = new Thread(new ThreadStart(Collector));
             RepeaterThread.Start();
@@ -40,7 +42,7 @@ namespace PXEBoot
                         {
                             kvp.Value.LastSend = DateTime.Now;
                             foreach (byte[] b in kvp.Value.datatosend)
-                                Program.SendData(Program.UDP69, 69, kvp.Key, b);
+                                Connector.SendData(Connector.UDP69, 69, kvp.Key, b);
                         }
                     }
                 }
@@ -112,7 +114,7 @@ namespace PXEBoot
                 }
             }
 
-            SessionData ses = new SessionData();
+            SessionData ses = new SessionData(Connector.ListenIP, this);
             ses.Architecture = Architecture;
             ses.IP = Client;
             ses.TFTPRootPath = Settings.TFTPRootPath;
@@ -166,7 +168,7 @@ namespace PXEBoot
         {
             if (RunningSessions.ContainsKey(client) == false)
             {
-                SessionData nses = new SessionData();
+                SessionData nses = new SessionData(Connector.ListenIP, this);
                 nses.Architecture = DHCPArchitecture.Undefined;
                 nses.IP = client;
                 nses.TFTPRootPath = Settings.TFTPRootPath + "Unknown\\";
@@ -369,14 +371,19 @@ namespace PXEBoot
         public int windowsize;
         UdpClient udp;
         public bool OpenACK = false;
+        IPAddress ListenIP;
+        Sessions Session;
 
-        public SessionData()
+        public SessionData(IPAddress ListenIP, Sessions Session)
         {
+            this.ListenIP = ListenIP;
+            this.Session = Session;
+
             for (int i = 60000; i < 65531; i++)
             {
                 try
                 {
-                    udp = new UdpClient(new IPEndPoint(Program.ListenIP, i));
+                    udp = new UdpClient(new IPEndPoint(ListenIP, i));
                     udp.EnableBroadcast = true;
                     udp.DontFragment = true;
                     udp.BeginReceive(new AsyncCallback(recvdata), udp);
@@ -409,10 +416,10 @@ namespace PXEBoot
             {
                 if (OpenACK == false)
                     return;
-                IPEndPoint ip = new IPEndPoint(Program.ListenIP, 0);
+                IPEndPoint ip = new IPEndPoint(ListenIP, 0);
                 byte[] buffer = u.EndReceive(res, ref ip);
 
-                Program.Session.Data(ip.Address, ip.Port, buffer);
+                Session.Data(ip.Address, ip.Port, buffer);
             }
             catch
             {

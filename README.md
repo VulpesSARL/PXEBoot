@@ -9,7 +9,7 @@ Includes a read-only TFTP server too.
 ### Prerequisites
 
 * a generic DHCP Server (those from routers is sufficient)
-* any C# compiler (I use Visual Studio 2017 Enterprise)
+* any C# compiler (I use Visual Studio 2022 Enterprise)
 
 ### Compiling
 
@@ -18,11 +18,11 @@ Includes a read-only TFTP server too.
 ### Using the program
 
 * Compile the program as Relase, and copy the Executable where you want on your server.
-* Open Registry, and go to (create if needed) to this folder: HKLM\Software\Fox\PXEBoot and create a REG_SZ RootPath pointing to the folder where the boot files are located.
 * Execute (using administrative permissions)
-	* PXEBoot -install
-	* PXEBoot -registereventlog
-	* PXEBoot -createdirstruct
+	* PXEBoot /configure
+	* PXEBoot /install
+	* PXEBoot /registereventlog
+	* PXEBoot /createdirstruct
 
 * Put the boot files (like MiniNT5) to the folders
 * Start the service.

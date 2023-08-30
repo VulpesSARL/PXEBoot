@@ -141,30 +141,6 @@ namespace PXEBoot
 
         #endregion
 
-        IPAddress GetCurrentIP()
-        {
-            if (string.IsNullOrWhiteSpace(Settings.IPAddressOverride) == false)
-            {
-                IPAddress ipaddr;
-                if (IPAddress.TryParse(Settings.IPAddressOverride, out ipaddr) == false)
-                    return (null);
-                return (ipaddr);
-            }
-            else
-            {
-                string strHostName = Dns.GetHostName();
-                IPHostEntry ipEntry = Dns.GetHostEntry(strHostName);
-                IPAddress[] addr = ipEntry.AddressList;
-                foreach (IPAddress a in addr)
-                {
-                    if (a.AddressFamily == AddressFamily.InterNetwork)
-                        return (a);
-                }
-            }
-
-            return (null);
-        }
-
         DHCPHeader DecodeBytes(byte[] data)
         {
             try
@@ -364,9 +340,9 @@ namespace PXEBoot
             BootFile = Encoding.ASCII.GetString(DHCPHdr.File).NullTrim();
         }
 
-        public DHCPPacket()
+        public DHCPPacket(IPAddress IPServer)
         {
-            IPServer = GetCurrentIP();
+            this.IPServer = IPServer;
             OperationCode = DHCPOperationCode.ServerToClient;
             HardwareType = DHCPHardwareType.Ethernet10;
             Flags = 0;
