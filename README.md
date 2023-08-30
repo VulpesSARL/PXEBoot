@@ -19,7 +19,7 @@ Includes a read-only TFTP server too.
 
 * Compile the program as Relase, and copy the Executable where you want on your server.
 * Execute (using administrative permissions)
-	* PXEBoot /configure
+	* PXEBoot /config
 	* PXEBoot /install
 	* PXEBoot /registereventlog
 	* PXEBoot /createdirstruct
