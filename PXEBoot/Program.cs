@@ -184,14 +184,23 @@ namespace PXEBoot
                 {
                     if (Settings.UseAllInterfaces == true || Settings.Interfaces.Contains(kvp.Value) == true)
                     {
-                        Connector conn = new Connector();
-                        conn.Connect(kvp.Key);
-                        Connectors.Add(conn);
+                        try
+                        {
+                            Connector conn = new Connector();
+                            conn.Connect(kvp.Key);
+                            Connectors.Add(conn);
+                        }
+                        catch (Exception ee)
+                        {
+                            Console.WriteLine("Cannot bind to " + kvp.Key.ToString() + ": " + ee.Message);
+                            FoxEventLog.WriteEventLog("Cannot bind to " + kvp.Key.ToString() + ": " + ee.Message, EventLogEntryType.Warning);
+                        }
                     }
                 }
 
                 if (Connectors.Count == 0)
                 {
+                    Console.WriteLine("No interfaces available to listen to ...");
                     FoxEventLog.WriteEventLog("No interfaces available to listen to ...", EventLogEntryType.Error);
                     return (2);
                 }
