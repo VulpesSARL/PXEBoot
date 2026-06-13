@@ -8,6 +8,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using PXEBoot.Properties;
+using static PXEBoot.VulpesUDPClient;
 
 namespace PXEBoot
 {
@@ -42,7 +44,7 @@ namespace PXEBoot
                         {
                             kvp.Value.LastSend = DateTime.Now;
                             foreach (byte[] b in kvp.Value.datatosend)
-                                Connector.SendData(Connector.UDP69, 69, kvp.Key, b);
+                                Connector.SendData(Connector.UDP69, kvp.Value.LocalInterface, 69, kvp.Key, b);
                         }
                     }
                 }
@@ -74,6 +76,7 @@ namespace PXEBoot
                         if (kvp.Value.currentfile != null)
                             kvp.Value.currentfile.Close();
                         RunningSessions.Remove(kvp.Key);
+                        Debug.WriteLine("SESSION: Removing Session (cleanup): " + kvp.Key);
                     }
                 }
 
@@ -99,10 +102,12 @@ namespace PXEBoot
             }
         }
 
-        public bool RegisterSession(IPAddress Client, DHCPArchitecture Architecture, string PathOverride)
+        public bool RegisterSession(LocalInterfaceData LocalInterface, IPAddress Client, DHCPArchitecture Architecture, string PathOverride)
         {
             if (Client == IPAddress.Any)
                 return (false);
+
+            bool ShouldInitiateSecureBootRecovery = false;
 
             lock (RunningSessions)
             {
@@ -110,14 +115,28 @@ namespace PXEBoot
                 {
                     if (RunningSessions[Client].currentfile != null)
                         RunningSessions[Client].currentfile.Close();
+                    if (RunningSessions[Client].AllowSecureBootRecovery == true && RunningSessions[Client].SecureBootRecoveryInProgress == false &&
+                        string.IsNullOrWhiteSpace(RunningSessions[Client].LastFilenameRequested) == false && RunningSessions[Client].LastFilenameRequested.ToLower() == "bootmgfw.efi")
+                        ShouldInitiateSecureBootRecovery = true;
                     RunningSessions.Remove(Client);
+
+                    Debug.WriteLine("SESSION: Removing Session: " + Client);
                 }
             }
 
             SessionData ses = new SessionData(Connector.ListenIP, this);
             ses.Architecture = Architecture;
             ses.IP = Client;
+            ses.LocalInterface = LocalInterface;
             ses.TFTPRootPath = Settings.TFTPRootPath;
+            if (Settings.DisableSecureBootRecovery == false)
+            {
+                if (Architecture == DHCPArchitecture.EFI_ByteCode || Architecture == DHCPArchitecture.EFI_EM64T)
+                    ses.AllowSecureBootRecovery = true;
+            }
+
+            if (ShouldInitiateSecureBootRecovery == true && ses.AllowSecureBootRecovery == true)
+                ses.SecureBootRecoveryInProgress = true;
 
             if (string.IsNullOrWhiteSpace(PathOverride) == false)
             {
@@ -161,30 +180,35 @@ namespace PXEBoot
             lock (RunningSessions)
                 RunningSessions.Add(Client, ses);
 
+            Debug.WriteLine("SESSION: New Session: " + Client);
+
             return (true);
         }
 
-        public bool Data(IPAddress client, int Port, byte[] data)
+        public bool Data(LocalInterfaceData LocalInterface, IPAddress client, int Port, byte[] data)
         {
-            if (RunningSessions.ContainsKey(client) == false)
+            SessionData ses;
+            lock (RunningSessions)
             {
-                SessionData nses = new SessionData(Connector.ListenIP, this);
-                nses.Architecture = DHCPArchitecture.Undefined;
-                nses.IP = client;
-                nses.TFTPRootPath = Settings.TFTPRootPath + "Unknown\\";
-                lock (RunningSessions)
+                if (RunningSessions.ContainsKey(client) == false)
+                {
+                    SessionData nses = new SessionData(Connector.ListenIP, this);
+                    nses.Architecture = DHCPArchitecture.Undefined;
+                    nses.IP = client;
+                    nses.LocalInterface = LocalInterface;
+                    nses.TFTPRootPath = Settings.TFTPRootPath + "Unknown\\";
                     RunningSessions.Add(client, nses);
-            }
+                }
 
-            SessionData ses = RunningSessions[client];
+                ses = RunningSessions[client];
+            }
 
             if (data.Length < 2)
             {
                 TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.IllegalTFTPOP, "Illegal TFTP OP");
-                ses.SendData(Port, client, err.GetBytes);
+                ses.SendData(Port, LocalInterface, client, err.GetBytes);
                 return (false);
             }
-
 
             TFTPOpcode opcode = (TFTPOpcode)(((int)data[0] * 0x100) + ((int)data[1] * 0x1));
             switch (opcode)
@@ -195,7 +219,7 @@ namespace PXEBoot
                         if (rr.Malformed == true)
                         {
                             TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.IllegalTFTPOP, "Malformed packet");
-                            ses.SendData(Port, client, err.GetBytes);
+                            ses.SendData(Port, LocalInterface, client, err.GetBytes);
                             return (false);
                         }
                         if (string.IsNullOrWhiteSpace(rr.Filename) == true)
@@ -203,41 +227,65 @@ namespace PXEBoot
                         if (string.IsNullOrWhiteSpace(rr.Filename) == true)
                         {
                             TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.IllegalTFTPOP, "Malformed packet");
-                            ses.SendData(Port, client, err.GetBytes);
+                            ses.SendData(Port, LocalInterface, client, err.GetBytes);
                             return (false);
                         }
+
                         ses.LastUpdated = DateTime.Now;
                         if (ses.currentfile != null)
                             ses.currentfile.Close();
                         ses.currentfile = null;
                         ses.datatosend = null;
                         ses.OpenACK = false;
+                        ses.LastFilenameRequested = rr.Filename;
                         ses.currentfilename = rr.Filename;
-                        Console.WriteLine(client.ToString() + "(" + ses.Architecture.ToString() + ") requesting file: " + rr.Filename);
-                        rr.Filename = rr.Filename.Replace("/", "\\");
-                        if (rr.Filename.StartsWith("\\") == true)
-                            rr.Filename = rr.Filename.Substring(1, rr.Filename.Length - 1);
-                        if (rr.Filename.EndsWith("\\") == true)
+
+                        Int64 FileLength = 0;
+
+                        if (rr.Filename.ToLower() == "bootmgfw.efi" && ses.SecureBootRecoveryInProgress == true)
                         {
-                            TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.FileNotFound, "Invalid path");
-                            ses.SendData(Port, client, err.GetBytes);
-                            return (false);
+                            //SecureBootRecovery.efi file!
+
+                            Console.WriteLine(client.ToString() + "(" + ses.Architecture.ToString() + ") requesting file: " + rr.Filename + " *** SECUREBOOT RECOVERY FILE ***");
+                            ses.currentfile = new MemoryStream(Resources.SecureBootRecoveryEFI);
+                            ses.blksize = rr.blksize == null ? 512 : rr.blksize.Value;
+                            if (ses.blksize > 1468)
+                                ses.blksize = 1468;
+                            ses.Sequence = null;
+                            ses.CurrentPos = 0;
+                            ses.TotalSize = Resources.SecureBootRecoveryEFI.Length;
+                            FileLength = ses.TotalSize;
+                            ses.windowsize = rr.windowsize == null ? 1 : rr.windowsize.Value;
                         }
-                        if (File.Exists(ses.TFTPRootPath + rr.Filename) == false)
+                        else
                         {
-                            TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.FileNotFound, "File does not exist");
-                            ses.SendData(Port, client, err.GetBytes);
-                            return (false);
+                            Console.WriteLine(client.ToString() + "(" + ses.Architecture.ToString() + ") requesting file: " + rr.Filename);
+                            rr.Filename = rr.Filename.Replace("/", "\\");
+                            if (rr.Filename.StartsWith("\\") == true)
+                                rr.Filename = rr.Filename.Substring(1, rr.Filename.Length - 1);
+                            if (rr.Filename.EndsWith("\\") == true)
+                            {
+                                TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.FileNotFound, "Invalid path");
+                                ses.SendData(Port, LocalInterface, client, err.GetBytes);
+                                return (false);
+                            }
+                            if (File.Exists(ses.TFTPRootPath + rr.Filename) == false)
+                            {
+                                TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.FileNotFound, "File does not exist");
+                                ses.SendData(Port, LocalInterface, client, err.GetBytes);
+                                return (false);
+                            }
+                            ses.currentfile = File.Open(ses.TFTPRootPath + rr.Filename, FileMode.Open, FileAccess.Read, FileShare.Read);
+                            ses.blksize = rr.blksize == null ? 512 : rr.blksize.Value;
+                            if (ses.blksize > 1468)
+                                ses.blksize = 1468;
+                            ses.Sequence = null;
+                            ses.CurrentPos = 0;
+                            FileInfo info = new FileInfo(ses.TFTPRootPath + rr.Filename);
+                            ses.TotalSize = info.Length;
+                            FileLength = ses.TotalSize;
+                            ses.windowsize = rr.windowsize == null ? 1 : rr.windowsize.Value;
                         }
-                        ses.currentfile = File.Open(ses.TFTPRootPath + rr.Filename, FileMode.Open, FileAccess.Read, FileShare.Read);
-                        ses.blksize = rr.blksize == null ? 512 : rr.blksize.Value;
-                        if (ses.blksize > 1468)
-                            ses.blksize = 1468;
-                        ses.Sequence = null;
-                        ses.CurrentPos = 0;
-                        FileInfo info = new FileInfo(ses.TFTPRootPath + rr.Filename);
-                        ses.TotalSize = info.Length;
-                        ses.windowsize = rr.windowsize == null ? 1 : rr.windowsize.Value;
                         List<string> Options = new List<string>();
                         if (rr.blksize != null)
                         {
@@ -247,7 +295,7 @@ namespace PXEBoot
                         if (rr.tsize != null)
                         {
                             Options.Add("tsize");
-                            Options.Add(info.Length.ToString());
+                            Options.Add(FileLength.ToString());
                         }
                         if (rr.windowsize != null)
                         {
@@ -256,24 +304,24 @@ namespace PXEBoot
                         }
                         TFTPPacketOptAck oack = new TFTPPacketOptAck(Options);
                         ses.OpenACK = true;
-                        ses.SendData(Port, client, oack.GetBytes);
+                        ses.SendData(Port, LocalInterface, client, oack.GetBytes);
                         Console.WriteLine(client.ToString() + "(" + ses.Architecture.ToString() + ") got file: " + ses.TFTPRootPath + rr.Filename);
                         break;
                     }
                 case TFTPOpcode.Write:
                     {
                         TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.AccessViolation, "Writing not supported");
-                        ses.SendData(Port, client, err.GetBytes);
+                        ses.SendData(Port, LocalInterface, client, err.GetBytes);
                         break;
                     }
                 case TFTPOpcode.Error:
                     {
-                        ses.LastUpdated = DateTime.Now;
-                        if (ses.currentfile != null)
-                            ses.currentfile.Close();
-                        ses.currentfile = null;
-                        ses.datatosend = null;
-                        ses.OpenACK = false;
+                        //ses.LastUpdated = DateTime.Now;
+                        //if (ses.currentfile != null)
+                        //    ses.currentfile.Close();
+                        //ses.currentfile = null;
+                        //ses.datatosend = null;
+                        //ses.OpenACK = false;
                         Console.WriteLine(client.ToString() + "(" + ses.Architecture.ToString() + ") got error from client");
                         break;
                     }
@@ -283,7 +331,7 @@ namespace PXEBoot
                         if (ack.Malformed == true)
                         {
                             TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.IllegalTFTPOP, "Malformed packet");
-                            ses.SendData(69, client, err.GetBytes);
+                            ses.SendData(69, LocalInterface, client, err.GetBytes);
                             return (false);
                         }
                         ses.LastUpdated = DateTime.Now;
@@ -297,7 +345,7 @@ namespace PXEBoot
                         if (ack.Ack != ses.Sequence)
                         {
                             TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.IllegalTFTPOP, "Invalid sequence");
-                            ses.SendData(Port, client, err.GetBytes);
+                            ses.SendData(Port, LocalInterface, client, err.GetBytes);
                             ses.LastSend = DateTime.Now;
                             return (false);
                         }
@@ -329,7 +377,7 @@ namespace PXEBoot
                         }
                         foreach (byte[] b in ses.datatosend)
                         {
-                            ses.SendData(Port, client, b);
+                            ses.SendData(Port, LocalInterface, client, b);
                         }
 
                         if (Read == 0)
@@ -343,7 +391,7 @@ namespace PXEBoot
                 default:
                     {
                         TFTPPacketError err = new TFTPPacketError(TFTPErrorCode.NotDefined, "Not defined OP " + opcode.ToString());
-                        ses.SendData(Port, client, err.GetBytes);
+                        ses.SendData(Port, LocalInterface, client, err.GetBytes);
                         ses.OpenACK = false;
                         return (false);
                     }
@@ -356,11 +404,13 @@ namespace PXEBoot
     class SessionData
     {
         public IPAddress IP;
-        public FileStream currentfile = null;
+        public LocalInterfaceData LocalInterface;
+        public Stream currentfile = null;
         public string currentfilename = "";
         public int blksize = 512;
         public DateTime LastUpdated = DateTime.Now;
         public DateTime LastSend = DateTime.Now;
+        public string LastFilenameRequested;
         public DHCPArchitecture Architecture;
         public string TFTPRootPath;
         public long TotalSize;
@@ -369,7 +419,9 @@ namespace PXEBoot
         public List<byte[]> datatosend = null;
         public int datatosendport;
         public int windowsize;
-        UdpClient udp;
+        public bool AllowSecureBootRecovery = false;
+        public bool SecureBootRecoveryInProgress = false;
+        VulpesUDPClient udp;
         public bool OpenACK = false;
         IPAddress ListenIP;
         Sessions Session;
@@ -383,10 +435,9 @@ namespace PXEBoot
             {
                 try
                 {
-                    udp = new UdpClient(new IPEndPoint(ListenIP, i));
-                    udp.EnableBroadcast = true;
-                    udp.DontFragment = true;
+                    udp = new VulpesUDPClient(new IPEndPoint(ListenIP, i), true);
                     udp.BeginReceive(new AsyncCallback(recvdata), udp);
+                    Debug.WriteLine("TFTP Listener: " + ListenIP + ":" + i);
                     break;
                 }
                 catch
@@ -400,11 +451,11 @@ namespace PXEBoot
 
         void recvdata(IAsyncResult res)
         {
-            UdpClient u;
+            VulpesUDPClient u;
 
             try
             {
-                u = (UdpClient)res.AsyncState;
+                u = ((AsyncReceiveState)res.AsyncState).Client;
             }
             catch
             {
@@ -416,10 +467,12 @@ namespace PXEBoot
             {
                 if (OpenACK == false)
                     return;
-                IPEndPoint ip = new IPEndPoint(ListenIP, 0);
-                byte[] buffer = u.EndReceive(res, ref ip);
+                ReceivedDatagram recv = u.EndReceive(res);
 
-                Session.Data(ip.Address, ip.Port, buffer);
+                byte[] buffer = buffer = new byte[recv.Length];
+                Array.Copy(recv.Buffer, buffer, recv.Length);
+
+                Session.Data(recv.LocalInterface, recv.RemoteEndpoint.Address, recv.RemoteEndpoint.Port, buffer);
             }
             catch
             {
@@ -443,11 +496,11 @@ namespace PXEBoot
             udp.Close();
         }
 
-        public bool SendData(int Port, IPAddress to, byte[] data)
+        public bool SendData(int Port, LocalInterfaceData LocalInterface, IPAddress to, byte[] data)
         {
             try
             {
-                udp.Send(data, data.Length, new IPEndPoint(to, Port));
+                udp.Send(data, data.Length, new IPEndPoint(to, Port), LocalInterface);
                 return (true);
             }
             catch (Exception ee)

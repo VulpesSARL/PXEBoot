@@ -11,6 +11,7 @@ namespace PXEBoot
     {
         static public string TFTPRootPath;
         static public bool UseAllInterfaces;
+        static public bool DisableSecureBootRecovery;
         static public List<string> Interfaces;
 
         static public void Load()
@@ -21,6 +22,7 @@ namespace PXEBoot
                     return;
                 TFTPRootPath = reg.GetValue("RootPath", "").ToString();
                 UseAllInterfaces = reg.GetValue("UseAllInterfaces", "1").ToString() == "1" ? true : false;
+                DisableSecureBootRecovery = reg.GetValue("DisableSecureBootRecovery", "0").ToString() == "1" ? true : false;
                 Interfaces = new List<string>();
                 using (RegistryKey IF = reg.OpenSubKey("Interfaces"))
                 {
@@ -39,6 +41,5 @@ namespace PXEBoot
                 reg.Close();
             }
         }
-
     }
 }

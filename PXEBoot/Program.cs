@@ -9,6 +9,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text;
 using System.Threading;
@@ -21,13 +22,27 @@ namespace PXEBoot
     {
         static public bool RunService = true;
         static List<Connector> Connectors = new List<Connector>();
+        public static string AppPath;
 #if !DEBUG
         static ServiceBase[] ServicesToRun;
 #endif
 
+        public static bool IsRunningAsAdministrator()
+        {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+            {
+                WindowsPrincipal principal = new WindowsPrincipal(identity);
+                return (principal.IsInRole(WindowsBuiltInRole.Administrator));
+            }
+        }
+
         [STAThread]
         static int Main(string[] args)
         {
+            AppPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            if (AppPath.EndsWith("\\") == false)
+                AppPath += "\\";
+
             if (args.Length > 0)
             {
 #if !DEBUG
@@ -40,6 +55,7 @@ namespace PXEBoot
                     Console.WriteLine("/registereventlog  Registers the Eventlog");
                     return (0);
                 }
+#endif
                 if (args[0] == "/config")
                 {
                     Console.WriteLine("Starting GUI Configuration");
@@ -48,6 +64,7 @@ namespace PXEBoot
                     Application.Run(new frmConfigWindow());
                     return (0);
                 }
+#if !DEBUG
                 if (args[0] == "/install")
                 {
                     ManagedInstallerClass.InstallHelper(new string[] { Assembly.GetExecutingAssembly().Location });
@@ -210,7 +227,11 @@ namespace PXEBoot
             }
             catch (Exception ee)
             {
+#if DEBUG
+                Console.WriteLine(ee.ToString());
+#else
                 Console.WriteLine(ee.Message);
+#endif
                 FoxEventLog.WriteEventLog("Server did not start: " + ee.Message, EventLogEntryType.Error);
                 return (3);
             }

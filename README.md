@@ -6,10 +6,12 @@ Includes a read-only TFTP server too.
 
 *This program is intended to combine with [MiniNT5](https://github.com/VulpesSARL/MiniNT5-Tools), but you can serve any files to boot, even Linux.*
 
+*SecureBootRecovery.efi* is included and will be served in case of a failed boot attempt. (Mainly due to certificate errors)
+
 ### Prerequisites
 
 * a generic DHCP Server (those from routers is sufficient)
-* any C# compiler (I use Visual Studio 2022 Enterprise)
+* any C# compiler (I use Visual Studio 2026 Enterprise)
 
 ### Compiling
 

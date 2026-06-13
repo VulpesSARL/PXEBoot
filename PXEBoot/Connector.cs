@@ -3,19 +3,30 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using static PXEBoot.VulpesUDPClient;
 
 namespace PXEBoot
 {
     internal class Connector
     {
-        UdpClient UDP4011 = null;
-        UdpClient UDP67 = null;
-        public UdpClient UDP69 = null;
+        /// <summary>
+        /// 2nd DHCP Port
+        /// </summary>
+        VulpesUDPClient UDP4011 = null;
+        /// <summary>
+        /// Primary DHCP Port
+        /// </summary>
+        VulpesUDPClient UDP67 = null;
+        /// <summary>
+        /// TFTP Port
+        /// </summary>
+        public VulpesUDPClient UDP69 = null;
         Sessions Session = null;
         public IPAddress ListenIP = IPAddress.Any;
 
@@ -27,26 +38,20 @@ namespace PXEBoot
 
             Session = new Sessions(this);
 
-            UDP4011 = new UdpClient(new IPEndPoint(ListenIP, 4011));
-            UDP4011.EnableBroadcast = true;
-            UDP4011.DontFragment = true;
+            UDP4011 = new VulpesUDPClient(new IPEndPoint(ListenIP, 4011));
             UDP4011.BeginReceive(new AsyncCallback(recv4011), UDP4011);
 
-            UDP67 = new UdpClient(new IPEndPoint(ListenIP, 67));
-            UDP67.EnableBroadcast = true;
-            UDP67.DontFragment = true;
+            UDP67 = new VulpesUDPClient(new IPEndPoint(ListenIP, 67));
             UDP67.BeginReceive(new AsyncCallback(recv67), UDP67);
 
-            UDP69 = new UdpClient(new IPEndPoint(ListenIP, 69));
-            UDP69.EnableBroadcast = true;
-            UDP69.DontFragment = true;
+            UDP69 = new VulpesUDPClient(new IPEndPoint(ListenIP, 69));
             UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
         }
 
         public void StopService()
         {
             Console.WriteLine("Disconnecting: " + ListenIP.ToString());
-            Debug.WriteLine("Binding: " + ListenIP.ToString());
+            Debug.WriteLine("Disconnecting: " + ListenIP.ToString());
 
             if (UDP4011 != null)
                 UDP4011.Close();
@@ -60,10 +65,10 @@ namespace PXEBoot
 
         void recv69(IAsyncResult res)
         {
-            UdpClient u;
+            VulpesUDPClient u;
             try
             {
-                u = (UdpClient)res.AsyncState;
+                u = ((AsyncReceiveState)res.AsyncState).Client;
             }
             catch
             {
@@ -72,10 +77,8 @@ namespace PXEBoot
             }
             try
             {
-                IPEndPoint ip = new IPEndPoint(ListenIP, 0);
-                byte[] buffer = u.EndReceive(res, ref ip);
-
-                Session.Data(ip.Address, ip.Port, buffer);
+                ReceivedDatagram recv = u.EndReceive(res);
+                Session.Data(recv.LocalInterface, recv.RemoteEndpoint.Address, recv.RemoteEndpoint.Port, recv.Buffer);
             }
             catch
             {
@@ -99,9 +102,7 @@ namespace PXEBoot
                     {
 
                     }
-                    UDP69 = new UdpClient(new IPEndPoint(ListenIP, 69));
-                    UDP69.EnableBroadcast = true;
-                    UDP69.DontFragment = true;
+                    UDP69 = new VulpesUDPClient(new IPEndPoint(ListenIP, 69));
                     UDP69.BeginReceive(new AsyncCallback(recv69), UDP69);
                 }
             }
@@ -109,10 +110,10 @@ namespace PXEBoot
 
         void recv4011(IAsyncResult res)
         {
-            UdpClient u;
+            VulpesUDPClient u;
             try
             {
-                u = (UdpClient)res.AsyncState;
+                u = ((AsyncReceiveState)res.AsyncState).Client;
             }
             catch
             {
@@ -123,10 +124,14 @@ namespace PXEBoot
             {
                 IPEndPoint ip = new IPEndPoint(ListenIP, 0);
                 byte[] buffer;
+                ReceivedDatagram recv;
 
                 try
                 {
-                    buffer = u.EndReceive(res, ref ip);
+                    recv = u.EndReceive(res);
+                    ip = recv.RemoteEndpoint;
+                    buffer = new byte[recv.Length];
+                    Array.Copy(recv.Buffer, buffer, recv.Length);
                 }
                 catch
                 {
@@ -175,7 +180,7 @@ namespace PXEBoot
                     MACAddr = MACAddr.Substring(0, MACAddr.Length - 2);
                 } while (MACAddr.Length > 0);
 
-                Session.RegisterSession(ip.Address, detectedarch, BootPath);
+                Session.RegisterSession(recv.LocalInterface, ip.Address, detectedarch, BootPath);
 
                 DHCPPacket send = new DHCPPacket(ListenIP);
                 send.MacAddress = dhcppacket.MacAddress;
@@ -200,8 +205,8 @@ namespace PXEBoot
                 if (data == null)
                     return;
 
-                SendData(UDP4011, 4011, ip.Address, data);
-                SendData(UDP4011, 68, IPAddress.Broadcast, data);
+                SendData(UDP4011, recv.LocalInterface, 4011, ip.Address, data);
+                SendData(UDP4011, recv.LocalInterface, 68, IPAddress.Broadcast, data);
 
                 Console.WriteLine(ip.Address.ToString() + " DHCP ack sent (System: " + detectedarch.ToString() + ")");
                 Debug.WriteLine(ip.Address.ToString() + " DHCP ack sent (System: " + detectedarch.ToString() + ")");
@@ -233,10 +238,10 @@ namespace PXEBoot
 
         void recv67(IAsyncResult res)
         {
-            UdpClient u;
+            VulpesUDPClient u;
             try
             {
-                u = (UdpClient)res.AsyncState;
+                u = ((AsyncReceiveState)res.AsyncState).Client;
             }
             catch
             {
@@ -246,12 +251,13 @@ namespace PXEBoot
 
             DHCPPacket dhcppacket;
             DHCPArchitecture detectedarch;
-            IPEndPoint ip;
+            ReceivedDatagram recv;
 
             try
             {
-                ip = new IPEndPoint(ListenIP, 0);
-                byte[] buffer = u.EndReceive(res, ref ip);
+                recv = u.EndReceive(res);
+                byte[] buffer = new byte[recv.Length];
+                Array.Copy(recv.Buffer, buffer, recv.Length);
 
                 dhcppacket = new DHCPPacket(buffer);
                 detectedarch = DHCPArchitecture.Undefined;
@@ -288,10 +294,11 @@ namespace PXEBoot
                 byte[] data = send.GetBytes();
                 if (data == null)
                     return;
-                SendData(UDP67, 68, IPAddress.Broadcast, data);
 
-                Console.WriteLine(ip.Address.ToString() + " DHCP offer sent");
-                Debug.WriteLine(ip.Address.ToString() + " DHCP offer sent");
+                SendData(UDP67, recv.LocalInterface, 68, IPAddress.Broadcast, data);
+
+                Console.WriteLine(recv.RemoteEndpoint.Address.ToString() + " DHCP offer sent");
+                Debug.WriteLine(recv.RemoteEndpoint.Address.ToString() + " DHCP offer sent");
             }
             catch
             {
@@ -304,11 +311,11 @@ namespace PXEBoot
             }
         }
 
-        public void SendData(UdpClient udp, int Port, IPAddress to, byte[] data)
+        public void SendData(VulpesUDPClient udp, LocalInterfaceData LocalInterface, int Port, IPAddress to, byte[] data)
         {
             try
             {
-                udp.Send(data, data.Length, new IPEndPoint(to, Port));
+                udp.Send(data, data.Length, new IPEndPoint(to, Port), LocalInterface);
             }
             catch (Exception ee)
             {
